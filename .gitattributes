@@ -1,0 +1,15 @@
+# Cross-platform repo: normalise in the index, check out native.
+* text=auto
+
+# Shell scripts and shims MUST stay LF even on Windows checkouts - a CRLF
+# shebang line makes the kernel look for an interpreter named "/bin/sh\r".
+*.sh   text eol=lf
+*.py   text eol=lf
+*.toml text eol=lf
+*.kdl  text eol=lf
+*.yml  text eol=lf
+*.md   text eol=lf
+
+# Windows shims are batch files; they want CRLF.
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
