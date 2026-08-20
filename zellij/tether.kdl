@@ -1,0 +1,46 @@
+// agent-tether zellij config, passed explicitly with `zellij --config`.
+//
+// WHY THIS FILE EXISTS AT ALL:
+// Everything here except `keybinds` could be passed as a CLI argument. Keybinds
+// cannot. They are also NOT read from layout files - zellij parses a `keybinds`
+// block inside a layout, validates it, and then silently discards it (there is
+// no code path that merges layout keybinds into a session's config). So the one
+// thing we cannot express as an argument is the one thing that needs a file.
+
+keybinds {
+    // Bound in EVERY mode on purpose.
+    //
+    // A tethered session has no status bar, so there is no way to see which
+    // input mode you are in. Any mode-DEPENDENT binding is therefore unusable:
+    // you cannot know whether it will fire. `shared` covers all modes.
+    //
+    // This also OVERRIDES zellij's stock `Ctrl q = Quit`, which lives in
+    // `shared_except "locked"`. That default is a footgun here: it is harmless
+    // while locked, then kills the session the moment you unlock. Detaching is
+    // the common act; quitting should be deliberate (`exit`, or `tether kill`).
+    shared {
+        bind "Ctrl q" { Detach; }
+    }
+}
+
+// Closing the terminal window detaches instead of killing the session.
+// This is already zellij's default; it is stated explicitly because it is the
+// single behaviour this entire project exists to guarantee.
+on_force_close "detach"
+
+// No pane borders, no "About" popup, no release-notes pane. A tethered pane
+// should be indistinguishable from a plain terminal.
+pane_frames        false
+show_startup_tips  false
+show_release_notes false
+
+// Crash recovery. Serialize the layout, the running command, the visible
+// viewport AND all scrollback, once per second.
+//
+// NOTE: this recovers the TERMINAL. It does not recover the agent's
+// conversation - that is a second, independent layer, restored by relaunching
+// the vendor CLI with its own session id. See docs/DESIGN.md.
+session_serialization         true
+pane_viewport_serialization   true
+scrollback_lines_to_serialize 0
+serialization_interval        1

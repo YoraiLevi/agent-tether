@@ -1,0 +1,12 @@
+// agent-tether bare layout.
+//
+// Zellij's tab-bar and status-bar are PLUGINS that the default layout loads
+// into fixed-height panes. Not naming them here is what removes them; there is
+// no separate "hide the UI" switch.
+//
+// The result is a single pane that behaves like an ordinary terminal, so:
+//   - `zellij action dump-screen` returns the agent's output and nothing else
+//   - an agent sending keystrokes never has to reason about zellij's modes
+layout {
+    pane
+}

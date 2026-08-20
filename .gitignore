@@ -1,0 +1,6 @@
+# local state, never committed
+*.log
+.DS_Store
+Thumbs.db
+/tmp/
+/.research/
