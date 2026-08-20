@@ -148,9 +148,12 @@ def test_socket_markers_are_recognised_on_posix(isolated, monkeypatch):
     monkeypatch.setattr(zellij, "_run", lambda *a, **k: None)
 
     if hasattr(socket_mod, "AF_UNIX"):
+        target = marker_dir / "tether-sock-session"
+        if len(str(target)) >= paths.SUN_PATH_MAX:
+            pytest.skip(f"test path itself exceeds sun_path: {len(str(target))} bytes")
         sock = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
         try:
-            sock.bind(str(marker_dir / "tether-sock-session"))
+            sock.bind(str(target))
             assert "tether-sock-session" in zellij.live_sessions()
         finally:
             sock.close()

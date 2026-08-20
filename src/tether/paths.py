@@ -120,6 +120,21 @@ def _uid_tag() -> str:
         return os.environ.get("USERNAME", "user")
 
 
+def _short_tmp() -> Path:
+    """A genuinely SHORT temp base, for paths bounded by sun_path.
+
+    NOT tempfile.gettempdir(). On macOS that resolves to a per-user folder like
+    /var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/ - 49 characters before we
+    add anything, which defeats the whole point of falling back. Literal /tmp
+    exists on both Linux and macOS (where it symlinks to /private/tmp) and
+    leaves ample room.
+    """
+    literal = Path("/tmp")
+    if literal.is_dir():
+        return literal
+    return Path(tempfile.gettempdir())
+
+
 def runtime_dir() -> Path:
     """Where zellij's session sockets live for tethered sessions.
 
@@ -154,13 +169,13 @@ def runtime_dir() -> Path:
         import hashlib
 
         tag = hashlib.sha256(str(root).encode()).hexdigest()[:8]
-        return Path(tempfile.gettempdir()) / f"{APP}-{_uid_tag()}-{tag}"
+        return _short_tmp() / f"{APP}-{_uid_tag()}-{tag}"
 
     if os.name == "nt":
         # Windows uses named pipes, not filesystem sockets; the limit does not
         # apply, so keep it tidy under the state tree.
         return state_dir() / "run"
-    return Path(tempfile.gettempdir()) / f"{APP}-{_uid_tag()}"
+    return _short_tmp() / f"{APP}-{_uid_tag()}"
 
 
 def socket_dir() -> Path:
