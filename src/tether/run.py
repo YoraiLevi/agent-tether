@@ -23,6 +23,39 @@ def _banner(session: str) -> None:
     sys.stderr.write(f"\033[2m[tether] {session} - Ctrl+q detaches, session keeps running\033[0m\n")
 
 
+def _merge_resume_argv(spec, original_argv: list[str], resume_argv: list[str]) -> list[str]:
+    """Keep the original launch flags, swap the session selector.
+
+    A session started as `claude --model opus --add-dir ../shared` must come
+    back with those flags. Restoring a bare `claude --resume <id>` silently
+    drops the model and the extra directories while reporting full success.
+
+    Any pre-existing resume/continue/set-id selector is stripped first, so we
+    never end up with two of them - the same splice an orchestrator has to do.
+    """
+    selectors = {
+        *spec.all_resume_flags,
+        *spec.all_set_id_flags,
+        *([spec.continue_flag] if spec.continue_flag else []),
+    }
+    kept: list[str] = []
+    skip = False
+    for token in original_argv:
+        if skip:
+            skip = False
+            continue
+        bare = token.split("=", 1)[0]
+        if bare in selectors:
+            if "=" not in token:
+                skip = True  # also drop its value
+            continue
+        if spec.resume_subcommand and token == spec.resume_subcommand:
+            skip = True
+            continue
+        kept.append(token)
+    return [*resume_argv, *kept]
+
+
 def run_shim(agent_name: str, argv: list[str]) -> int:
     cfg, cfg_errors = registry.load_config()
     reg = registry.load(cfg)
@@ -68,10 +101,43 @@ def run_shim(agent_name: str, argv: list[str]) -> int:
     record = store.load(session)
     if record and session in zellij.recoverable_sessions():
         env = dict(record.env)
+        spec = reg.get(record.agent)
+        resume_argv = spec.resume_argv(record.provider_session_id)
+
+        if resume_argv:
+            # REBUILD, never replay. `zellij attach --force-run-commands`
+            # re-runs the command zellij serialized - the ORIGINAL launch line,
+            # including `--session-id <uuid>`. For grok that flag is launch-only
+            # and yields a brand-new empty conversation; gemini exits fatally on
+            # a duplicate. This is the same rebuild `tether restore` performs,
+            # and it has to live here too because `cd project && claude` after a
+            # reboot is the far more common path.
+            merged = _merge_resume_argv(spec, record.argv, resume_argv)
+            zellij.delete(session)
+            if human:
+                _banner(session)
+                return zellij.create(
+                    session, record.binary, merged, record.cwd, detached=False, env=env
+                )
+            rc = zellij.create(session, record.binary, merged, record.cwd, detached=True, env=env)
+            os.environ["_TETHER_CHILD_LAUNCHED"] = "1"
+            if rc != 0:
+                sys.stderr.write(f"tether: failed to resurrect {session}\n")
+                return rc
+            print(session)
+            return 0
+
         if human:
             _banner(session)
             return zellij.attach(session, force_run_commands=True, env=env)
-        zellij.attach(session, force_run_commands=True, env=env)
+
+        # The agent lane must NEVER foreground-attach: `zellij attach` without
+        # -b blocks until a human detaches and paints a TUI onto the stdout the
+        # caller is parsing. Resurrect detached instead.
+        rc = zellij.attach(session, force_run_commands=True, env=env, detached=True)
+        if rc != 0:
+            sys.stderr.write(f"tether: failed to resurrect {session}\n")
+            return rc
         print(session)
         return 0
 
@@ -105,6 +171,7 @@ def run_shim(agent_name: str, argv: list[str]) -> int:
         return zellij.create(session, binary, launch_argv, cwd, detached=False, env=env)
 
     rc = zellij.create(session, binary, launch_argv, cwd, detached=True, env=env)
+    os.environ["_TETHER_CHILD_LAUNCHED"] = "1"
     if rc != 0:
         sys.stderr.write(f"tether: failed to create session {session}\n")
         return rc

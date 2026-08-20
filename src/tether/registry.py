@@ -134,6 +134,16 @@ class Agent:
     # -- derived helpers ------------------------------------------------------
 
     @property
+    def known(self) -> bool:
+        """False when no config layer described this agent.
+
+        A fallback Agent has empty flag lists, so classification cannot
+        distinguish a headless call from an interactive one. The router uses
+        this to refuse the dangerous lane rather than guess.
+        """
+        return self.source != "fallback" and not self.source.startswith("fallback+")
+
+    @property
     def all_resume_flags(self) -> list[str]:
         return [f for f in [self.resume_flag, *self.resume_aliases] if f]
 

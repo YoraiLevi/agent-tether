@@ -49,6 +49,10 @@ def _has_tty() -> bool:
         return False
 
 
+def _wants_tty(tty: bool | None) -> bool:
+    return tty if tty is not None else _has_tty()
+
+
 def _first_positional(argv: list[str], agent: Agent) -> str | None:
     """First non-flag token, skipping values consumed by flags.
 
@@ -79,18 +83,23 @@ def classify(
     """Decide the lane. Pure: no I/O, so it is fully unit-testable."""
     env = os.environ if env is None else env
 
-    forced = env.get("TETHER_FORCE_LANE")
-    if forced in {"agent", "human", "passthrough"}:
-        # `tether new` uses this so an orchestrator can request a detached
-        # session even when it happens to have a terminal attached.
-        return Decision(Lane(forced), "TETHER_FORCE_LANE")
-
+    # The safety guards come FIRST. TETHER_FORCE_LANE used to outrank them,
+    # which meant the documented TETHER_DISABLE=1 escape hatch did not work,
+    # and - because the variable leaked into the session environment - every
+    # shimmed call inside a `tether new` session was forced to the agent lane,
+    # including a subagent's `claude -p`.
     if env.get("TETHER_DISABLE") == "1":
         return Decision(Lane.PASSTHROUGH, "TETHER_DISABLE=1")
     if env.get("TETHER_ACTIVE") == "1":
         return Decision(Lane.PASSTHROUGH, "recursion guard: already inside the shim")
     if env.get("ZELLIJ_SESSION_NAME") or env.get("ZELLIJ"):
         return Decision(Lane.PASSTHROUGH, "already inside a zellij session; refusing to nest")
+
+    forced = env.get("TETHER_FORCE_LANE")
+    if forced in {"agent", "human", "passthrough"}:
+        # `tether new` uses this so an orchestrator can request a detached
+        # session even when it happens to have a terminal attached.
+        return Decision(Lane(forced), "TETHER_FORCE_LANE")
 
     # interactive_flags beat headless_flags. agy's -i/--prompt-interactive
     # reads like a headless prompt flag but opens a real session.
@@ -107,8 +116,37 @@ def classify(
     if first:
         if first in agent.headless_subcommands:
             return Decision(Lane.PASSTHROUGH, f"headless subcommand '{first}'")
-        if first in agent.subcommands and first not in agent.session_start_subcommands:
+        if first in agent.session_start_subcommands:
+            return Decision(
+                Lane.HUMAN if _wants_tty(tty) else Lane.AGENT, f"session start '{first}'"
+            )
+        if first in agent.subcommands:
             return Decision(Lane.PASSTHROUGH, f"management subcommand '{first}'")
+        # An UNRECOGNISED positional, for a vendor that dispatches on
+        # subcommands, most likely IS a subcommand we failed to see - because a
+        # value-taking flag was missing from value_flags, so we read the flag's
+        # VALUE as the positional. `codex --cd /repo exec "run tests"` did
+        # exactly that and got tethered.
+        #
+        # value_flags can never be complete for every vendor forever, so this
+        # is the structural backstop: unsure -> pass through.
+        if agent.headless_subcommands:
+            return Decision(
+                Lane.PASSTHROUGH,
+                f"unrecognised positional {first!r} for a subcommand-dispatched "
+                f"vendor; passing through rather than risk tethering a headless call",
+            )
+
+    # (4) We have no data for this agent at all. We cannot tell a headless call
+    # from an interactive one, and guessing wrong towards 'tether' is the
+    # silent, catastrophic direction. Only take it when a human is watching.
+    if not agent.known:
+        if tty if tty is not None else _has_tty():
+            return Decision(Lane.HUMAN, "unknown agent, but a human is at the terminal")
+        return Decision(
+            Lane.PASSTHROUGH,
+            "no registry entry for this agent; cannot classify its flags safely",
+        )
 
     # The vendor's own background flag. Intercepting it yields a background
     # agent that can be ATTACHED to, which is strictly more capability.
@@ -128,20 +166,24 @@ def provided_session_id(agent: Agent, argv: list[str]) -> str | None:
     session instead of forking a second one for the same conversation.
     """
     wanted = {*agent.all_resume_flags, *agent.all_set_id_flags}
+
     for i, token in enumerate(argv):
         if "=" in token:
             head, _, tail = token.partition("=")
-            if head in wanted and tail:
+            if head in wanted and tail.strip():
                 return tail
             continue
         if token in wanted and i + 1 < len(argv):
             nxt = argv[i + 1]
-            if not nxt.startswith("-"):
+            # An empty value is not an id. Treating "" as provided made run.py
+            # think none was given (it is falsy) and prepend a SECOND
+            # --session-id, producing two of the flag.
+            if nxt.strip() and not nxt.startswith("-"):
                 return nxt
     if agent.resume_subcommand:
         for i, token in enumerate(argv):
             if token == agent.resume_subcommand and i + 1 < len(argv):
                 nxt = argv[i + 1]
-                if not nxt.startswith("-"):
+                if nxt.strip() and not nxt.startswith("-"):
                     return nxt
     return None

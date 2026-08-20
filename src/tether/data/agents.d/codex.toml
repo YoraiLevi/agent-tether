@@ -17,7 +17,12 @@ subcommands          = ["login", "logout", "mcp"]
 # `codex resume <id>` is a subcommand that STARTS a session, so it must be
 # tethered even though it looks like management traffic.
 session_start_subcommands = ["resume"]
-value_flags = ["-p", "--profile", "-m", "--model", "-c", "--config"]
+# Must list EVERY value-taking flag: a missing one makes the flag's value
+# look like the subcommand. `codex --cd /repo exec ...` was mis-routed
+# before --cd was listed here.
+value_flags = ["-p", "--profile", "-m", "--model", "-c", "--config",
+               "-C", "--cd", "--sandbox", "-a", "--ask-for-approval",
+               "--image", "-i", "--oss"]
 
 resume_subcommand = "resume"
 transcript_dir    = "~/.codex/sessions"

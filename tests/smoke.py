@@ -138,9 +138,14 @@ def main() -> int:
             failures.append(f"TETHER_DISABLE bypass failed: rc={rc} out={out!r}")
 
     if failures:
+        # Encoding-safe: the cases deliberately include non-ASCII, and a
+        # UnicodeEncodeError in the REPORTER hides the failure it is reporting.
+        out = sys.stdout
+        enc = getattr(out, "encoding", None) or "utf-8"
         print(f"SMOKE FAILED ({len(failures)})")
         for f in failures:
-            print("  -", f)
+            safe = f.encode(enc, "backslashreplace").decode(enc)
+            out.write(f"  - {safe}\n")
         return 1
 
     print(f"smoke ok: {len(CASES)} argv cases passed through byte-identically")

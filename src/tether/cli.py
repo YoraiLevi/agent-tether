@@ -16,6 +16,7 @@ import click
 
 from . import naming, paths, registry, shims, store, zellij
 from .resolve import BinaryNotFound, next_binary
+from .run import _merge_resume_argv
 
 API_VERSION = 1
 
@@ -93,7 +94,7 @@ def ls_cmd(agent, cwd_, under, name_, id_, state, as_json):
         rows.append(_record_json(rec, st))
 
     known = {r.session for r in records}
-    if not any([agent, cwd_, under, name_, id_]):
+    if not any([agent, cwd_, under, name_, id_]) and state in ("any", "live"):
         for s in sorted(live - known):
             if naming.is_tether_session(s):
                 rows.append(
@@ -171,12 +172,17 @@ def attach_cmd(session):
     sys.exit(4)
 
 
-@main.command("new")
+@main.command(
+    "new",
+    # Without these, click consumes anything starting with "-" as its OWN
+    # option, so `tether new claude --model opus` failed with "No such
+    # option". The vendor's flags must reach the vendor.
+    context_settings={"ignore_unknown_options": True, "allow_interspersed_args": False},
+)
 @click.argument("agent")
 @click.argument("extra", nargs=-1, type=click.UNPROCESSED)
 @click.option("--cwd", "cwd_", default=None, help="working directory for the session")
-@click.option("--json", "as_json", is_flag=True)
-def new_cmd(agent, extra, cwd_, as_json):
+def new_cmd(agent, extra, cwd_):
     """Create a DETACHED session and print its id.
 
     The spawn primitive for orchestrators. Prints exactly one line on stdout.
@@ -199,8 +205,21 @@ def new_cmd(agent, extra, cwd_, as_json):
 @click.argument("session")
 @click.option("--json", "as_json", is_flag=True)
 def read_cmd(session, as_json):
-    """Dump what is currently on the session's screen."""
-    text = zellij.dump_screen(session)
+    """Dump what is currently on the session's screen. Exit 4 if it is gone."""
+    try:
+        text, rc = zellij.dump_screen(session)
+    except zellij.ZellijMissing as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+    if rc != 0:
+        # Previously this returned empty output and exit 0, so an orchestrator
+        # polling a dead session could not tell "gone" from "blank screen" and
+        # would poll forever.
+        if as_json:
+            _emit({"error": "not_found", "session": session}, True)
+        else:
+            click.echo(f"no such session: {session}", err=True)
+        sys.exit(4)
     if as_json:
         _emit({"session": session, "screen": text}, True)
     else:
@@ -217,8 +236,15 @@ def send_cmd(session, text, enter):
     NOTE: this writes to the pane's stdin. It bypasses zellij's keybinding
     layer, so it cannot be used to trigger key bindings.
     """
-    rc = zellij.write_chars(session, text)
-    if enter and rc == 0:
+    try:
+        rc = zellij.write_chars(session, text)
+    except zellij.ZellijMissing as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+    if rc != 0:
+        click.echo(f"no such session: {session}", err=True)
+        sys.exit(4)
+    if enter:
         rc = zellij.send_enter(session)
     sys.exit(rc)
 
@@ -227,8 +253,13 @@ def send_cmd(session, text, enter):
 @click.argument("session")
 def kill_cmd(session):
     """End a session and forget it."""
+    live, recoverable = _states()
+    known = store.load(session) is not None or session in live or session in recoverable
     zellij.kill(session)
     store.delete(session)
+    if not known:
+        click.echo(f"no such session: {session}", err=True)
+        sys.exit(4)
     click.echo(f"killed {session}")
 
 
@@ -279,22 +310,47 @@ def restore_cmd(as_json, dry_run):
             # Rebuild rather than replay. Replaying the original launch line is
             # the silent-empty-restore trap: grok's --session-id explicitly
             # does not resume, and gemini exits fatally on a duplicate.
-            if not dry_run:
-                zellij.delete(rec.session)
-                zellij.create(
-                    rec.session,
-                    rec.binary,
-                    resume_argv,
-                    rec.cwd,
-                    detached=True,
-                    env=dict(rec.env),
+            #
+            # Keep the ORIGINAL flags and swap only the selector, so a session
+            # started with --model opus does not silently come back without it.
+            merged = _merge_resume_argv(agent, rec.argv, resume_argv)
+            if dry_run:
+                results.append({"session": rec.session, "result": "conversation_and_terminal"})
+                continue
+            if not Path(rec.binary).is_file() and not shutil.which(rec.binary):
+                # Do NOT delete the resurrection entry: the terminal-only
+                # fallback is still worth something, and once deleted it is
+                # gone for good.
+                results.append(
+                    {
+                        "session": rec.session,
+                        "result": "failed",
+                        "reason": f"binary no longer exists: {rec.binary}",
+                    }
                 )
+                continue
+            zellij.delete(rec.session)
+            rc = zellij.create(
+                rec.session, rec.binary, merged, rec.cwd, detached=True, env=dict(rec.env)
+            )
+            if rc != 0:
+                # Previously the return code was discarded and this reported
+                # 'conversation_and_terminal' in green - for a session that no
+                # longer existed in any form, because delete had already run.
+                results.append(
+                    {"session": rec.session, "result": "failed", "reason": f"zellij exited {rc}"}
+                )
+                continue
             results.append({"session": rec.session, "result": "conversation_and_terminal"})
             continue
 
         if rec.session in recoverable:
             if not dry_run:
-                zellij.attach(rec.session, force_run_commands=True, env=dict(rec.env))
+                # Detached: restore must never seize the terminal, least of all
+                # when restoring a dozen sessions at once.
+                zellij.attach(
+                    rec.session, force_run_commands=True, env=dict(rec.env), detached=True
+                )
             results.append(
                 {
                     "session": rec.session,
@@ -424,7 +480,10 @@ def agents_cmd(as_json):
         click.secho(f"config problem: {path}: {msg}", fg="red")
 
 
-@main.command("explain")
+@main.command(
+    "explain",
+    context_settings={"ignore_unknown_options": True, "allow_interspersed_args": False},
+)
 @click.argument("agent")
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def explain_cmd(agent, args):

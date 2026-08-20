@@ -24,14 +24,18 @@ def _fallback_exec(agent: str, argv: list[str]) -> int:
 
     Reached when something in our own logic broke. Losing durability for one
     call is survivable; making `claude` stop working is not.
+
+    The WHOLE body is guarded: previously only the lookup was, so an OSError
+    from executing the target (a .ps1 on Windows raises WinError 193) escaped
+    as a traceback from the very handler whose job is to prevent that.
     """
     try:
         from .resolve import next_binary
 
-        binary = next_binary(agent)
-    except Exception:
+        return exec_passthrough(next_binary(agent), argv)
+    except BaseException as exc:  # noqa: BLE001 - this is the last line of defence
+        sys.stderr.write(f"tether: could not run {agent}: {exc}\n")
         return 127
-    return exec_passthrough(binary, argv)
 
 
 def exec_passthrough(binary: str, argv: list[str]) -> int:

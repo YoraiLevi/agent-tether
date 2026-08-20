@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -40,8 +41,14 @@ def version() -> tuple[int, int, int] | None:
         ).stdout
     except Exception:
         return None
-    digits = [int(p) for p in out.replace("zellij", "").strip().split(".")[:3] if p.isdigit()]
-    return tuple(digits) if len(digits) == 3 else None  # type: ignore[return-value]
+    # Match a leading x.y.z anywhere in the output. The old parser required
+    # three purely numeric dot-separated parts, so "0.44.3+git" or "0.43.0-dev"
+    # returned None - and doctor then SKIPPED the minimum-version check and
+    # reported no problem. An indicator that cannot go red is not an indicator.
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
 
 def base_env(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -159,7 +166,18 @@ def create(
     flag = "-b" if detached else "-c"
     args = ["--config", str(paths.zellij_config_file()), "attach", flag, session]
     args += _option_args(session)
-    return _run(args, extra_env=env).returncode
+    if not detached:
+        # Interactive: zellij owns the terminal, so it must inherit stdio.
+        return _run(args, extra_env=env).returncode
+    # Detached: the caller's stdout carries the machine-readable session id and
+    # nothing else, so zellij must not write to it.
+    #
+    # DEVNULL, NOT a pipe. capture_output=True deadlocks here: the detached
+    # zellij SERVER inherits the pipe and never closes it, so subprocess.run
+    # waits for EOF forever even though the client has exited.
+    # stderr is left inherited on purpose - zellij's diagnostics should reach
+    # the user, and stderr is not part of the contract.
+    return _run(args, extra_env=env, stdout=subprocess.DEVNULL).returncode
 
 
 def attach(
@@ -182,14 +200,19 @@ def delete(session: str) -> None:
         _run(["delete-session", session], capture_output=True, timeout=20)
 
 
-def dump_screen(session: str) -> str:
+def dump_screen(session: str) -> tuple[str, int]:
+    """Return (screen, returncode).
+
+    The return code matters: a missing session is not an empty screen, and a
+    caller polling one must be able to tell the difference.
+    """
     proc = _run(
         ["--session", session, "action", "dump-screen"],
         capture_output=True,
         text=True,
         timeout=30,
     )
-    return proc.stdout or ""
+    return (proc.stdout or ""), proc.returncode
 
 
 def write_chars(session: str, text: str) -> int:
