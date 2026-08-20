@@ -127,6 +127,9 @@ class Agent:
     verified: bool = False
     enabled: bool = True
     source: str = "builtin"
+    #: Keys this layer actually set, so merging can distinguish "unset" from
+    #: "deliberately set to the default value".
+    explicit: set[str] = field(default_factory=set)
 
     # -- derived helpers ------------------------------------------------------
 
@@ -144,6 +147,11 @@ class Agent:
 
         When False, a crash restore can bring the terminal back but NOT the
         conversation, and the tool must say so instead of implying success.
+
+        `set_id_launch_only` does NOT disqualify a vendor here: choosing the id
+        at launch is exactly how we learn it, which is what makes a later
+        resume possible. It only forbids REPLAYING that flag to resume - see
+        resume_argv, which never emits a set-id flag.
         """
         return bool(self.set_id_flag)
 
@@ -163,6 +171,10 @@ class Agent:
             return [self.resume_subcommand, session_id]
         if self.resume_flag:
             return [self.resume_flag, session_id]
+        # Deliberately NOT falling back to set_id_flag. For grok that flag is
+        # launch-only ("Does not resume existing sessions" - its own --help),
+        # and for vendors that create-if-missing it would silently produce a
+        # brand-new empty conversation while reporting success.
         return None
 
     def to_dict(self) -> dict[str, Any]:
@@ -190,7 +202,16 @@ class Registry:
         found = self.agents.get(name)
         if found and found.enabled:
             return found
-        return Agent(name=name, binary=name, source="fallback")
+        fallback = Agent(name=name, binary=name, source="fallback")
+        # Apply the env override here too. Without this, TETHER_TARGET_<AGENT>
+        # worked for unknown agents inside resolve.next_binary but the registry
+        # disagreed about where the binary was - two sources of truth.
+        env_key = f"TETHER_TARGET_{name.upper().replace('-', '_')}"
+        override = os.environ.get(env_key)
+        if override:
+            fallback.binary = override
+            fallback.source = "fallback+env"
+        return fallback
 
     def names(self) -> list[str]:
         return sorted(n for n, a in self.agents.items() if a.enabled)
@@ -214,19 +235,29 @@ def _coerce(raw: dict[str, Any], name: str, source: str) -> tuple[Agent | None, 
             if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
                 return None, f"'{f}' must be a list of strings"
             setattr(agent, f, list(v))
-    if not agent.binary:
+
+    # Record which keys the file ACTUALLY set. Merging must not infer this by
+    # comparing against defaults: that makes it impossible to override a field
+    # back TO its default - you could never clear a builtin's headless_flags to
+    # [], nor set verified = false over a builtin true. Those edits would be
+    # silently ignored, which is the worst way for a config system to behave.
+    agent.explicit = {f for f in (*_STR_FIELDS, *_BOOL_FIELDS, *_LIST_FIELDS) if f in raw}
+
+    if not agent.binary and "binary" not in agent.explicit:
         agent.binary = name
     return agent, None
 
 
 def _merge(base: Agent, over: Agent) -> Agent:
-    """Per-key merge so a drop-in can override one field and inherit the rest."""
+    """Per-key merge so a drop-in can override one field and inherit the rest.
+
+    A key is taken from `over` iff `over` explicitly set it - see _coerce.
+    """
     merged = Agent(name=base.name, source=f"{base.source}+{over.source}")
     for f in (*_STR_FIELDS, *_BOOL_FIELDS, *_LIST_FIELDS):
-        over_val = getattr(over, f)
-        base_val = getattr(base, f)
-        default = getattr(Agent(name=base.name), f)
-        setattr(merged, f, over_val if over_val != default else base_val)
+        take_over = f in over.explicit
+        setattr(merged, f, getattr(over, f) if take_over else getattr(base, f))
+    merged.explicit = base.explicit | over.explicit
     return merged
 
 
