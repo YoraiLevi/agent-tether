@@ -82,7 +82,16 @@ def live_sessions() -> list[str]:
     if not marker_dir.is_dir():
         return []
     try:
-        return sorted(p.name for p in marker_dir.iterdir() if p.is_file())
+        # NOT is_file(). On Linux and macOS these markers are real unix domain
+        # SOCKETS, and Path.is_file() is False for a socket - so this returned
+        # an empty list on every POSIX machine and `tether ls` could never show
+        # a live session. Windows uses named pipes with a regular file marker,
+        # which is why it worked there and only Linux CI caught it.
+        #
+        # zellij makes the same distinction in its own source: is_socket() on
+        # unix, is_file() on everything else. Accepting any non-directory entry
+        # covers both without per-platform branching.
+        return sorted(p.name for p in marker_dir.iterdir() if not p.is_dir())
     except OSError:
         return []
 

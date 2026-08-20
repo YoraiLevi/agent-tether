@@ -130,3 +130,39 @@ def test_find_by_subtree_ignores_a_sibling_with_a_shared_prefix(isolated, tmp_pa
             )
         )
     assert {r.session for r in store.find(under=str(a))} == {"in"}
+
+
+def test_socket_markers_are_recognised_on_posix(isolated, monkeypatch):
+    """zellij's session markers are real unix SOCKETS on Linux and macOS.
+
+    Path.is_file() is False for a socket, so the old probe returned an empty
+    list on every POSIX machine - `tether ls` could never show a live session.
+    Windows uses a regular-file marker, which is why only Linux CI caught it.
+    """
+    import socket as socket_mod
+
+    from tether import zellij
+
+    marker_dir = paths.socket_dir() / "contract_version_1"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(zellij, "_run", lambda *a, **k: None)
+
+    if hasattr(socket_mod, "AF_UNIX"):
+        sock = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
+        try:
+            sock.bind(str(marker_dir / "tether-sock-session"))
+            assert "tether-sock-session" in zellij.live_sessions()
+        finally:
+            sock.close()
+    else:
+        (marker_dir / "tether-file-session").write_text("", encoding="utf-8")
+        assert "tether-file-session" in zellij.live_sessions()
+
+
+def test_directories_are_not_mistaken_for_sessions(isolated, monkeypatch):
+    from tether import zellij
+
+    marker_dir = paths.socket_dir() / "contract_version_1"
+    (marker_dir / "not-a-session").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(zellij, "_run", lambda *a, **k: None)
+    assert "not-a-session" not in zellij.live_sessions()

@@ -44,6 +44,44 @@ def isolated(tmp_path, monkeypatch):
         zellij.kill(name)
 
 
+def diagnose(session: str) -> str:
+    """Everything needed to explain a failure on a machine we cannot reach.
+
+    A bare 'session never became live' is unactionable in CI. This dumps what
+    zellij was actually asked to do and what it actually produced.
+    """
+    import subprocess
+
+    lines = [
+        "",
+        f"session       : {session}",
+        f"socket_dir    : {paths.socket_dir()}  exists={paths.socket_dir().is_dir()}",
+        f"headroom      : {paths.socket_path_headroom()}",
+        f"layouts_dir   : {paths.layouts_dir()}",
+    ]
+    marker = paths.socket_dir() / "contract_version_1"
+    lines.append(f"marker_dir    : {marker}  exists={marker.is_dir()}")
+    if marker.is_dir():
+        lines.append(f"markers       : {[p.name for p in marker.iterdir()]}")
+    layout = paths.layouts_dir() / f"{session}.kdl"
+    if layout.is_file():
+        lines.append("layout        : " + layout.read_text(encoding="utf-8").replace("\n", " | "))
+    try:
+        proc = subprocess.run(
+            [zellij.executable(), "ls"],
+            env=zellij.base_env(),
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        lines.append(f"zellij ls rc  : {proc.returncode}")
+        lines.append(f"zellij ls out : {proc.stdout.strip()!r}")
+        lines.append(f"zellij ls err : {proc.stderr.strip()!r}")
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"zellij ls     : raised {exc}")
+    return "\n".join(lines)
+
+
 def wait_for(predicate, timeout=30.0, interval=0.5):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -69,8 +107,8 @@ def test_create_detached_then_see_it_live(isolated):
         detached=True,
         env={},
     )
-    assert rc == 0
-    assert wait_for(lambda: session in zellij.live_sessions()), "session never became live"
+    assert rc == 0, diagnose(session)
+    assert wait_for(lambda: session in zellij.live_sessions()), diagnose(session)
 
     # A live session must be discoverable from the socket markers, which is
     # what `tether ls` relies on instead of `zellij ls`.
