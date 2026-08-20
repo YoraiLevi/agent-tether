@@ -50,20 +50,30 @@ zellij 0.44.3
 
 ## 3. agent-tether
 
-```console
-$ uv tool install agent-tether
-```
-
-From a git checkout instead:
+**Not yet published to PyPI**, so install from git:
 
 ```console
 $ uv tool install git+https://github.com/YoraiLevi/agent-tether
 ```
 
-Try it without installing:
+Once it is on PyPI this will work instead:
 
 ```console
-$ uvx --from agent-tether tether doctor
+$ uv tool install agent-tether        # not available yet
+```
+
+Try it without installing anything permanently:
+
+```console
+$ uvx --from git+https://github.com/YoraiLevi/agent-tether tether doctor
+```
+
+From a local checkout, for development:
+
+```console
+$ git clone https://github.com/YoraiLevi/agent-tether && cd agent-tether
+$ uv sync --extra dev
+$ uv run tether doctor
 ```
 
 Then generate the shims:

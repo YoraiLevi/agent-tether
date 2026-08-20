@@ -36,10 +36,13 @@ cargo install --locked zellij
 Then:
 
 ```bash
-uv tool install agent-tether
+uv tool install git+https://github.com/YoraiLevi/agent-tether
 tether install --all
 tether doctor
 ```
+
+> Not on PyPI yet, so install from git for now. Once published,
+> `uv tool install agent-tether` will work.
 
 `tether install` writes one small shim per agent CLI and tells you if its directory isn't on `PATH` yet. `tether doctor` verifies the whole chain and names anything that would break it.
 
