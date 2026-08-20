@@ -1,0 +1,13 @@
+schema = 1
+[agent]
+name = "gemini"
+display_name = "Gemini CLI"
+verified = false
+headless_flags = ["-p", "--prompt"]
+info_flags = ["-h", "--help", "-v", "--version"]
+value_flags = ["-p", "--prompt", "-m", "--model", "--session-id", "-r", "--resume"]
+set_id_flag = "--session-id"
+resume_flag = "--resume"
+resume_aliases = ["-r"]
+transcript_dir = "~/.gemini/tmp"
+notes = "Documented only. Reported to exit fatally on a duplicate --session-id and on a missing --resume target, which is the good kind of failure."

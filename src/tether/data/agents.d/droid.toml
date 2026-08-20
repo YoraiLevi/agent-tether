@@ -1,0 +1,10 @@
+schema = 1
+[agent]
+name = "droid"
+display_name = "Factory Droid"
+verified = false
+headless_subcommands = ["exec"]
+info_flags = ["-h", "--help", "--version"]
+value_flags = ["--resume", "-s", "--session-id", "--model"]
+resume_flag = "--resume"
+notes = "-r is mode dependent (--resume interactively, --reasoning-effort under `droid exec`) so only the long form is used. Behaviour on a missing session id is UNKNOWN - probe before trusting restore."

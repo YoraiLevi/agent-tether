@@ -1,0 +1,11 @@
+schema = 1
+[agent]
+name = "devin"
+display_name = "Devin CLI"
+verified = false
+headless_flags = ["-p", "--print"]
+info_flags = ["-h", "--help", "--version"]
+value_flags = ["-r", "--resume", "-p", "--print"]
+resume_flag = "--resume"
+resume_aliases = ["-r"]
+notes = "Behaviour on a missing session id is UNKNOWN - probe before trusting restore."

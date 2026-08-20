@@ -1,0 +1,27 @@
+schema = 1
+
+[agent]
+name         = "claude"
+display_name = "Claude Code"
+verified     = true
+install_hint = "https://claude.com/claude-code"
+
+# Lane classification -------------------------------------------------------
+headless_flags = ["-p", "--print"]
+info_flags     = ["-h", "--help", "-v", "--version"]
+subcommands    = ["agents", "auth", "doctor", "gateway", "import", "install",
+                  "mcp", "project", "ultrareview"]
+# Intercepted so the result is a background agent you can ATTACH to.
+background_flags = ["--bg", "--background"]
+# Flags that consume the next token, so we never mistake a value for a subcommand.
+value_flags = ["--model", "--agent", "--settings", "--add-dir", "--session-id",
+               "--resume", "-r", "--append-system-prompt", "--permission-mode"]
+
+# Session identity ----------------------------------------------------------
+set_id_flag   = "--session-id"     # takes a UUID
+resume_flag   = "--resume"
+resume_aliases = ["-r"]
+continue_flag = "--continue"
+
+transcript_dir = "~/.claude/projects"
+notes = "One of the few vendors that lets us choose the session id up front, so a restored terminal also restores the conversation."

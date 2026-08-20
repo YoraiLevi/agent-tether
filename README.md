@@ -1,217 +1,236 @@
 # agent-tether
 
-**Durable, individually-addressable terminals for agent CLIs.**
+**Your coding agent shouldn't die because you closed a window.**
 
-Your coding agent dies when the thing that launched it dies. Close the IDE, quit the orchestrator, lose the SSH connection, reboot the host — the agent goes with it. `agent-tether` puts a zellij session between the launcher and the agent, so the agent outlives whatever started it.
+`agent-tether` puts a durable [zellij](https://zellij.dev) session between an agent CLI and whatever launched it. Close the IDE, quit the orchestrator, lose the SSH link, reboot the host — the agent keeps working, and you reattach from anywhere.
 
-It is a **transparent shim**. You do not learn a new command. You keep typing `claude`, `codex`, `agy`; your orchestrator keeps spawning them exactly as before. The shim decides what each invocation actually needs.
-
-> **Status: v0.1, Windows only.** Verified against zellij 0.44.3 and Claude Code 2.1.237 on Windows 11. A POSIX port is on the roadmap and not written yet. Read [Limitations](#limitations) before adopting — one of them is significant.
-
----
-
-## Why
+It is a **transparent shim**. You keep typing `claude`, `codex`, `agy`. Your orchestrator keeps spawning them exactly as before. Nothing learns a new command.
 
 ```
 without tether                        with tether
---------------                        -----------
-orchestrator                          orchestrator
+──────────────                        ───────────
+your IDE                              your IDE
   └── shell                             └── shell
-        └── claude   <- dies with it          └── zellij client  <- only this dies
+        └── claude   ← dies with it           └── zellij client   ← only this dies
                                                     ⇢ zellij server (detached)
-                                                          └── claude  <- survives
+                                                          └── claude   ← survives
 ```
 
-The agent is no longer a child of the thing that launched it. Quit the orchestrator and the work keeps running; reattach from any terminal, later, from anywhere.
-
-## What it is not
-
-It is **not** a wrapper around everything. `claude -p "summarize this"` must return text on stdout. Putting a terminal multiplexer in the middle of that returns a TUI instead of an answer — and it fails *silently*, which is the worst way to fail. So the shim is a **router**:
-
-| Invocation | Lane | What happens |
-|---|---|---|
-| `claude -p "..."`, `codex exec`, `mimo run` | pass-through | untouched, byte-identical |
-| `claude mcp`, `codex login`, `--help`, `--version` | pass-through | untouched |
-| already inside a tethered session | pass-through | no nesting |
-| `claude` at a terminal | **human** | create-or-attach, then attach |
-| `claude` spawned with no TTY, or `claude --bg` | **agent** | create **detached**, print the session id, exit 0 |
-
-The TTY test is the load-bearing signal: a human at a terminal has a console, a spawned process does not.
+> **v0.2 · Linux, macOS, Windows.** Unit-tested on all three; integration-tested on Linux. See [Limitations](#limitations) — one of them matters if you use an orchestrator like Orca.
 
 ---
-
-## Requirements
-
-- Windows 10/11
-- [zellij](https://zellij.dev) **0.44.0 or newer** — native Windows support landed in 0.44.0
-  ```powershell
-  cargo install --locked zellij
-  ```
-- PowerShell 5.1+ (PowerShell 7 is used automatically when present)
 
 ## Install
 
-```powershell
-git clone https://github.com/YoraiLevi/agent-tether.git
-cd agent-tether
-.\install.ps1
+Two dependencies. Neither is bundled.
+
+```bash
+# 1. uv — https://docs.astral.sh/uv/
+curl -LsSf https://astral.sh/uv/install.sh | sh          # Linux / macOS
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"  # Windows
+
+# 2. zellij >= 0.44 — https://zellij.dev
+cargo install --locked zellij
 ```
 
-That writes one `.cmd` shim per agent CLI it finds, plus a `tether` management command, into `%LOCALAPPDATA%\agent-tether\bin`, and prepends that directory to your **user** PATH. Nothing else on your system is modified — the real agent binaries are never touched, moved, or renamed. The shims work purely by PATH precedence.
+Then:
 
-Open a **new** terminal, then:
-
-```powershell
+```bash
+uv tool install agent-tether
+tether install --all
 tether doctor
 ```
 
-```
-shims and what they chain to:
-  claude       tethered     -> C:\Users\you\.local\bin\claude.exe
-  codex        tethered     -> C:\Users\you\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe
-```
+`tether install` writes one small shim per agent CLI and tells you if its directory isn't on `PATH` yet. `tether doctor` verifies the whole chain and names anything that would break it.
 
-### Install options
-
-```powershell
-.\install.ps1 -ShimDir D:\tools\shims       # you choose where
-.\install.ps1 -Agents claude,codex          # only these
-.\install.ps1 -PathPosition none            # write shims, do not touch PATH
-.\install.ps1 -PathPosition last            # only used if nothing else provides the name
-```
-
-`-PathPosition none` is the honest choice if you already manage PATH yourself, or if another tool also shadows these executables and you want to decide the order.
-
-### Chaining with other shims
-
-The shims do **not** hardcode a vendor path. At run time each one walks PATH, skips any file carrying the `agent-tether-shim` marker, and calls the next match.
-
-So if other software also shadows `claude`, both survive. Whichever is earlier on PATH runs first and reaches the other *through* us. Override a specific target explicitly at any time:
-
-```powershell
-$env:TETHER_TARGET_CLAUDE = "C:\some\other\claude.exe"
-```
-
-## Uninstall
-
-```powershell
-.\uninstall.ps1              # remove shims + PATH entry, keep running sessions
-.\uninstall.ps1 -PurgeState  # also kill every tethered session and delete state
-```
-
-Uninstalling deletes only files carrying our marker; anything else in the shim directory is left alone and reported. Running sessions are ordinary zellij sessions and keep running unless you pass `-PurgeState`.
+Full details, per-OS notes and troubleshooting: **[docs/INSTALL.md](docs/INSTALL.md)**.
 
 ---
 
-## Use
+## The day, end to end
 
-### As a human
+This is the entire product. Everything else is detail.
 
-```powershell
-cd ~/source/myproject
-claude
+### Morning — start work
+
+```console
+$ cd ~/src/payments
+$ claude
+[tether] tether-claude-payments-1a2b3c4d - Ctrl+q detaches, session keeps running
 ```
 
-You get your agent, in a bare terminal — no tab bar, no status bar, no modes. Press <kbd>Ctrl</kbd>+<kbd>q</kbd> to detach, or just close the window. The agent keeps running.
+You get your agent in a plain terminal. No tab bar, no status bar, no modes.
 
-Run `claude` in that directory again and you land back in the same session. Naming is per-directory for the human lane, so it is idempotent per project.
+### Midday — step away
 
-### As an orchestrator
+Press **`Ctrl+q`**. Or just close the window. Or quit your IDE entirely.
 
-```powershell
-claude --bg
-# -> tether-claude-a41c9e2b     (one line on stdout, nothing else)
+```console
+$ tether ls
+* tether-claude-payments-1a2b3c4d  claude  live  payments
 ```
 
-Exit code 0 means the session is live and addressable. Later:
+Still running. It kept working while you were in a meeting.
 
-```powershell
-tether attach tether-claude-a41c9e2b
+### Afternoon — pick it back up
+
+```console
+$ cd ~/src/payments
+$ claude
 ```
 
-You can take over an agent a robot started, work by hand, and detach again — leaving it running.
+Same command as this morning, and you land **back in the same session** with its history intact. Naming is per-directory, so `claude` in a project is idempotent — you never have to remember a session id.
 
-### Managing
+### Evening — the machine reboots
 
-```powershell
-tether ls                # every tethered session and its state
-tether attach <session>  # attach, resurrecting first if needed
-tether restore           # after a reboot: bring everything back, detached
-tether reap              # delete finished sessions so listings stay useful
-tether kill <session>    # end one and forget it
-tether doctor            # install state + what each shim chains to
+```console
+$ tether restore
+conversation_and_terminal  tether-claude-payments-1a2b3c4d
+conversation_and_terminal  tether-gemini-docs-9f8e7d6c
+terminal_only              tether-codex-api-4b5c6d7e   codex never told us its session id
+
+2 restored with conversation, 1 terminal-only
 ```
 
-## Crash recovery
+Read that output. The two results are **not** the same thing, and the difference is the single most important idea in this tool — see [What restore can actually recover](#what-restore-can-actually-recover).
 
-The host crashes. On reboot:
+---
 
-```powershell
-tether restore
+## Exact usage, three agents
+
+```console
+# Claude Code — best supported: it can be told its session id up front,
+# so restore brings back the conversation, not just the terminal.
+$ cd ~/src/api && claude
+$ claude --resume 9602334f-75fb-45bc-991b-868b958a7951   # lands on the SAME tether session
+$ claude -p "summarize the diff"                          # headless: passes straight through
+
+# Codex — resume is a bare subcommand, and `codex exec` is its headless mode.
+$ cd ~/src/api && codex
+$ codex resume 01930f2a-...        # tethered: it starts a session
+$ codex exec "run the tests"       # passes through: it prints and exits
+$ codex -p myprofile               # tethered: -p is --profile here, NOT --print
+
+# Antigravity — resumes by conversation, and -i is interactive despite looking headless.
+$ cd ~/src/api && agy
+$ agy --conversation 7f3a1c2b      # tethered
+$ agy -p "explain this file"       # passes through
+$ agy -i --prompt "start here"     # tethered: -i wins over -p
 ```
 
-```
-restored  tether-claude-myproject-1a2b3c4d  [claude]  conversation + terminal
-restored  tether-codex-9f2e1a               [codex]   TERMINAL ONLY - agent starts fresh
-2 with conversation, 1 terminal-only, 0 already live, 0 skipped
+Not sure which way a command will go? Ask:
+
+```console
+$ tether explain codex -p myprofile
+lane    human
+reason  interactive terminal
 ```
 
-**Read that output carefully — the two results are not the same thing.**
+A human walkthrough with expected output at every step: **[docs/TUTORIAL.md](docs/TUTORIAL.md)**.
+
+---
+
+## For orchestrators and agents
+
+Spawn detached, get one line back, drive it later:
+
+```console
+$ tether new claude --cwd ~/src/api
+tether-claude-a41c9e2b
+
+$ tether ls --under ~/src --state live --json
+$ tether read tether-claude-a41c9e2b        # what is on its screen
+$ tether send tether-claude-a41c9e2b "run the tests"
+$ tether attach tether-claude-a41c9e2b      # a human takes over, then Ctrl+q
+$ tether kill tether-claude-a41c9e2b
+```
+
+Every command takes `--json`, with a versioned schema. Filter by directory, subtree, agent, state, name or vendor session id.
+
+Full surface, schemas and exit codes: **[docs/API.md](docs/API.md)**. Drop-in agent skills: **[skills/](skills/)**.
+
+---
+
+## What restore can actually recover
 
 There are two independent layers of state:
 
 ```
-zellij session ─── panes, layout, cwd, the command line   ← zellij serializes this
-   └── agent    ─── the actual conversation                ← zellij knows nothing about it
+zellij session ─── panes, layout, cwd, command line   ← zellij restores this
+   └── agent    ─── the conversation                   ← only the vendor CLI can
 ```
 
-Restore the first alone and you get a beautifully restored terminal running a **brand-new, empty** agent. It looks like it worked. It didn't.
+Restore the outer layer alone and you get a perfectly restored terminal running a **brand-new, empty agent**. It looks like it worked. It didn't. Avoiding that is why this tool exists in the shape it does.
 
-`agent-tether` collapses the two onto one identifier where it can: when a vendor supports choosing a session id up front, the shim mints one UUID and gives it to both zellij and the agent. Then restore rebuilds the launch command in the vendor's **resume** form and the transcript comes back with the terminal.
+Where a vendor lets us choose its session id up front, `agent-tether` mints one id and gives it to both layers, so they come back together. **Only some vendors allow that**, so `tether restore` labels every result honestly rather than implying success.
 
-**Only 4 of 12 vendors support this**: `claude`, `grok`, `gemini`, `pi`. For the rest the session id is generated by the vendor after launch and we never learn it, so restore is honestly labelled `TERMINAL ONLY`.
+Which agents fall on which side: **[docs/AGENTS.md](docs/AGENTS.md)**.
 
-Restore deliberately **rebuilds** rather than replaying the original command. Replaying is the silent-empty-restore trap — grok's own help says `--session-id` *"Does not resume existing sessions"*, and gemini exits fatally on a duplicate. The cost is that a rebuilt session does not carry the old scrollback. A correct transcript beats a pretty terminal.
+---
+
+## Adding an agent we don't ship
+
+Drop a file. No source change, no pull request.
+
+```toml
+# ~/.config/agent-tether/agents.d/mytool.toml
+schema = 1
+
+[agent]
+name           = "mytool"
+headless_flags = ["--oneshot"]
+resume_flag    = "--resume"
+set_id_flag    = "--session-id"
+```
+
+```console
+$ tether agents          # confirm it loaded
+$ tether install mytool
+```
+
+Layering, every field, and worked examples: **[docs/CONFIG.md](docs/CONFIG.md)**.
+
+---
+
+## Commands
+
+| | |
+|---|---|
+| `tether ls` | sessions, with filters and `--json` |
+| `tether get <session>` | one session in detail |
+| `tether attach <session>` | attach, resurrecting first if needed |
+| `tether new <agent>` | create detached, print the id |
+| `tether read` / `send` | read a screen, type into a session |
+| `tether restore` | after a reboot, bring everything back |
+| `tether reap` | delete finished sessions |
+| `tether kill <session>` | end one and forget it |
+| `tether install` / `uninstall` | manage shims |
+| `tether agents` | known CLIs and what restore can do for each |
+| `tether explain <agent> …` | which lane an invocation takes, and why |
+| `tether doctor` | check everything, name what's broken |
+| `tether paths` | every location used |
 
 ---
 
 ## Limitations
 
-**1. Orchestrator live-status may go blank.** This is the significant one. Some orchestrators (Orca among them) identify the running agent by walking the pane's process-tree descendants and filtering by the pane's ConPTY console process list. A tethered agent runs under `zellij-server` — neither a descendant of the pane shell nor attached to its ConPTY — so such a tool may conclude no agent is running, even though it is. Durability and reattachment still work. See [docs/ORCA.md](docs/ORCA.md) for the full analysis and mitigations.
+1. **Orchestrator live-status may go blank.** Tools that identify the running agent by walking the pane's process tree (Orca does) won't see a tethered agent, because it deliberately runs outside that tree. Durability and reattach are unaffected; the sidebar is. See **[docs/ORCA.md](docs/ORCA.md)**.
+2. **Not every agent can restore its conversation.** See [above](#what-restore-can-actually-recover).
+3. **Per-call startup cost** of a Python process (~50–150 ms). Irrelevant interactively, noticeable in a tight `claude -p` loop — set `TETHER_DISABLE=1` for those.
+4. **`droid` and `devin` restore behaviour is unverified** — neither documents what happens on a missing session id.
 
-**2. Windows only.** The router is PowerShell and the shims are `.cmd`.
+## Documentation
 
-**3. 8 of 12 vendors cannot restore their conversation.** See above. `tether restore` tells you which is which rather than pretending.
-
-**4. Per-invocation startup cost.** Every shimmed call starts a PowerShell process (~150–400 ms). Irrelevant for an interactive session, noticeable if you call `claude -p` in a tight loop. Set `TETHER_DISABLE=1` to bypass the shim entirely for such a run.
-
-**5. Argument fidelity.** Pass-through recovers the caller's raw command-line text and hands it to the child verbatim, so quoting survives. The tethered lanes re-quote arguments through a generated layout; exotic quoting there is less well tested.
-
-**6. `droid` and `devin` restore behaviour is unverified.** Neither documents what happens when a session id does not exist. Probe before trusting restore for those.
-
-## Environment variables
-
-| Variable | Effect |
+| | |
 |---|---|
-| `TETHER_DISABLE=1` | bypass the shim completely for this process |
-| `TETHER_HOME` | state directory (default `%LOCALAPPDATA%\agent-tether`) |
-| `TETHER_TARGET_<AGENT>` | force the binary a given shim chains to |
-| `TETHER_QUIET=1` | suppress the `[tether]` banner line |
-
-Orchestrator identity variables (`ORCA_*`, `CONDUCTOR_*`, `GHOSTX_*`, and anything prefixed `TETHER_CARRY_`) are captured at spawn and replanted on restore, so hook-based telemetry keeps its pane attribution. Vendor session variables such as `CLAUDE_CODE_*` are deliberately **not** carried — they describe the launcher's conversation, and inheriting them would make a new agent believe it is part of its parent's session.
-
-## Layout
-
-```
-src/tether.ps1     the router: lanes, naming, registry, zellij plumbing
-src/agents.json    per-vendor flags, each row marked verified or docs-only
-zellij/tether.kdl  keybinds + serialization (keybinds CANNOT live in a layout)
-zellij/layouts/    the bare layout: one pane, no UI plugins
-install.ps1        generate shims, manage PATH
-uninstall.ps1      exact reverse
-docs/DESIGN.md     why the lanes and the two-layer id design are shaped this way
-docs/ORCA.md       orchestrator compatibility, and the process-tree problem
-```
+| [docs/INSTALL.md](docs/INSTALL.md) | dependencies, per-OS install, PATH, uninstall |
+| [docs/TUTORIAL.md](docs/TUTORIAL.md) | step-by-step for a human, with expected output |
+| [docs/AGENTS.md](docs/AGENTS.md) | every supported CLI and what restore can recover |
+| [docs/CONFIG.md](docs/CONFIG.md) | the pluggable config system, every field and variable |
+| [docs/API.md](docs/API.md) | the JSON API for orchestrators and agents |
+| [docs/DESIGN.md](docs/DESIGN.md) | why it is built this way, and the failures each choice prevents |
+| [docs/ORCA.md](docs/ORCA.md) | orchestrator compatibility and the process-tree problem |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | symptom → cause → fix |
 
 ## License
 

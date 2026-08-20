@@ -1,0 +1,16 @@
+schema = 1
+
+[agent]
+name         = "agy"
+display_name = "Antigravity"
+verified     = true
+
+headless_flags    = ["-p", "--print", "--prompt"]
+# -i LOOKS headless and is not. interactive_flags win over headless_flags.
+interactive_flags = ["-i", "--prompt-interactive"]
+info_flags        = ["-h", "--help", "--version"]
+value_flags       = ["--prompt", "--conversation", "--model"]
+
+resume_flag    = "--conversation"
+transcript_dir = ""
+notes = "Its session key is spelled conversationId, not session_id. No set-id flag - confirmed absent from the flag listing and from the binary's strings."

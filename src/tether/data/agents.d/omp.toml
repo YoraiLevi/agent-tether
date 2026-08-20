@@ -1,0 +1,11 @@
+schema = 1
+[agent]
+name = "omp"
+display_name = "oh-my-pi"
+verified = false
+headless_flags = ["-p", "--print"]
+info_flags = ["-h", "--help", "--version"]
+value_flags = ["-r", "--resume", "--session"]
+resume_flag = "--resume"
+resume_aliases = ["-r", "--session"]
+notes = "oh-my-pi (omp.sh), a fork of pi - NOT Oh My Posh. It dropped pi's --session-id; here --session is a plain alias of --resume."

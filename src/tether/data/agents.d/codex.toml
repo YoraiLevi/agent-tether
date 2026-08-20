@@ -1,0 +1,22 @@
+schema = 1
+
+[agent]
+name         = "codex"
+display_name = "OpenAI Codex CLI"
+verified     = true
+install_hint = "npm i -g @openai/codex  (or the platform installer)"
+
+# NOTE: top-level -p is --profile, NOT print. Listing it as headless would
+# silently send interactive sessions down the pass-through lane.
+headless_flags       = []
+headless_subcommands = ["exec", "e", "review"]
+info_flags           = ["-h", "--help", "-V", "--version"]
+subcommands          = ["login", "logout", "mcp", "review"]
+# `codex resume <id>` is a subcommand that STARTS a session, so it must be
+# tethered even though it looks like management traffic.
+session_start_subcommands = ["resume"]
+value_flags = ["-p", "--profile", "-m", "--model", "-c", "--config"]
+
+resume_subcommand = "resume"
+transcript_dir    = "~/.codex/sessions"
+notes = "No set-id flag: `codex --session-id x` errors with 'unexpected argument'. Restores are TERMINAL ONLY unless the id is captured after launch."

@@ -1,0 +1,11 @@
+schema = 1
+[agent]
+name = "mimo"
+display_name = "Mimo Code"
+verified = false
+headless_subcommands = ["run"]
+info_flags = ["-h", "--help", "--version"]
+value_flags = ["-s", "--session", "--model"]
+resume_flag = "--session"
+resume_aliases = ["-s"]
+notes = "Inside `mimo run`, -p is --password. Passes an unknown id through with no create-if-missing, so a bad restore is silent."

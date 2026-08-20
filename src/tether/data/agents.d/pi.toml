@@ -1,0 +1,14 @@
+schema = 1
+[agent]
+name = "pi"
+display_name = "Pi Coding Agent"
+verified = false
+headless_flags = ["-p", "--print"]
+info_flags = ["-h", "--help", "--version"]
+value_flags = ["--session", "--session-id", "--model"]
+set_id_flag = "--session-id"
+resume_flag = "--session"
+continue_flag = "--continue"
+id_is_path = true
+transcript_dir = "~/.pi/agent/sessions"
+notes = "--session-id creates if missing (idempotent). -r/--resume takes NO value (picker). The transcript path is the identity, so comparisons must be path-aware."

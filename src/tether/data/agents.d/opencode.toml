@@ -1,0 +1,11 @@
+schema = 1
+[agent]
+name = "opencode"
+display_name = "OpenCode"
+verified = false
+headless_subcommands = ["run"]
+info_flags = ["-h", "--help", "--version"]
+value_flags = ["-s", "--session", "--model"]
+resume_flag = "--session"
+resume_aliases = ["-s"]
+notes = "Server mints ses_<26 chars>; we cannot choose it. Prints 'Session not found' on a miss."

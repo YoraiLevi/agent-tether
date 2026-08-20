@@ -1,0 +1,21 @@
+schema = 1
+
+[agent]
+name         = "grok"
+display_name = "Grok CLI"
+verified     = true
+
+headless_flags = ["-p", "--single", "--prompt-file", "--prompt-json"]
+info_flags     = ["-h", "--help", "--version"]
+value_flags    = ["-p", "--single", "--prompt-file", "--prompt-json", "-s",
+                  "--session-id", "-r", "--resume", "--model"]
+
+set_id_flag        = "-s"
+set_id_aliases     = ["--session-id"]
+# Its own --help says: "Does not resume existing sessions - use --resume".
+# Replaying the launch line on restore would silently create an empty session.
+set_id_launch_only = true
+resume_flag        = "--resume"
+resume_aliases     = ["-r"]
+continue_flag      = "--continue"
+notes = "-p takes a VALUE here (--single), unlike claude's boolean -p."

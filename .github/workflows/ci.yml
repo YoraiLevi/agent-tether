@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # All three OSes on every push: this project's whole risk surface is
+        # platform-specific (PATHEXT, exec bits, execv semantics, XDG paths).
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+
+      - name: Sync
+        run: uv sync --extra dev --python ${{ matrix.python }}
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Unit tests
+        # These deliberately need neither zellij nor any vendor CLI, so the
+        # dangerous logic (lane routing, recursion, naming, config merge) is
+        # covered identically on all three OSes.
+        run: uv run pytest -v --cov=tether --cov-report=term-missing
+
+      - name: Smoke test the installed console scripts
+        run: uv run python -m tests.smoke
+        shell: bash
+
+  integration:
+    name: integration (zellij, ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install zellij
+        run: |
+          set -euo pipefail
+          VER=$(curl -fsSL https://api.github.com/repos/zellij-org/zellij/releases/latest | grep -oP '"tag_name": "\K[^"]+')
+          echo "zellij $VER"
+          curl -fsSL "https://github.com/zellij-org/zellij/releases/download/${VER}/zellij-x86_64-unknown-linux-musl.tar.gz" | tar -xz
+          sudo install -m 0755 zellij /usr/local/bin/zellij
+          zellij --version
+
+      - name: Sync
+        run: uv sync --extra dev
+
+      - name: Integration tests
+        env:
+          TETHER_INTEGRATION: "1"
+        run: uv run pytest -v -m integration
+
+  build:
+    name: build wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+      - name: Confirm data files are in the wheel
+        # A wheel missing data/agents.d would install cleanly and then know
+        # about zero agents - a silent failure worth a dedicated check.
+        run: |
+          set -euo pipefail
+          python -m zipfile -l dist/*.whl | grep -q 'tether/data/agents.d/claude.toml'
+          python -m zipfile -l dist/*.whl | grep -q 'tether/data/zellij/tether.kdl'
+          echo "data files present"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
