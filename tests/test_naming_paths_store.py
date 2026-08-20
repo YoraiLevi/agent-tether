@@ -89,12 +89,16 @@ def test_new_session_id_is_a_uuid():
 # --------------------------------------------------------------------------
 
 
-def test_tether_home_relocates_everything(tmp_path, monkeypatch):
+def test_tether_home_relocates_persistent_state(tmp_path, monkeypatch):
+    """TETHER_HOME relocates config, data and state.
+
+    The socket directory is deliberately exempt when the relocated path would
+    exceed the unix socket length limit - isolation there is preserved by
+    hashing the root instead. See test_distinct_roots_get_distinct_socket_dirs.
+    """
     monkeypatch.setenv(paths.HOME_ENV, str(tmp_path))
-    for value in paths.describe().values():
-        if value.startswith(str(paths.builtin_data_dir())):
-            continue
-        assert str(tmp_path) in value or "data" in value
+    for key in ("config_dir", "config_file", "data_dir", "state_dir", "sessions_dir"):
+        assert str(tmp_path) in paths.describe()[key]
 
 
 def test_xdg_vars_are_honoured_on_every_os(tmp_path, monkeypatch):
@@ -203,3 +207,35 @@ def test_find_by_agent(isolated):
     store.save(record(session="a", agent="claude"))
     store.save(record(session="b", agent="codex"))
     assert [r.session for r in store.find(agent="codex")] == ["b"]
+
+
+def test_socket_dir_stays_within_the_unix_socket_limit(tmp_path, monkeypatch):
+    """Regression: a long TETHER_HOME produced a path over sun_path's 104 bytes.
+
+    zellij reports this as 'the IPC socket path is too long', which is opaque
+    unless you know the limit exists. Found by Linux CI, where pytest's tmp
+    paths are long enough to trip it.
+    """
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("TETHER_SOCKET_DIR", raising=False)
+    deep = tmp_path / ("d" * 60) / ("e" * 60)
+    monkeypatch.setenv(paths.HOME_ENV, str(deep))
+    if os.name != "nt":
+        assert paths.socket_path_headroom() >= 0, paths.socket_dir()
+
+
+def test_distinct_roots_get_distinct_socket_dirs(tmp_path, monkeypatch):
+    """The short-path fallback must not merge two isolated installations."""
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("TETHER_SOCKET_DIR", raising=False)
+    long = "f" * 80
+    monkeypatch.setenv(paths.HOME_ENV, str(tmp_path / long / "one"))
+    a = paths.socket_dir()
+    monkeypatch.setenv(paths.HOME_ENV, str(tmp_path / long / "two"))
+    b = paths.socket_dir()
+    assert a != b
+
+
+def test_socket_dir_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("TETHER_SOCKET_DIR", str(tmp_path / "s"))
+    assert paths.socket_dir() == tmp_path / "s" / "sock"

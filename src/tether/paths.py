@@ -17,6 +17,7 @@ decision.
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 APP = "agent-tether"
@@ -105,22 +106,72 @@ def bin_dir() -> Path:
     return data_dir() / "shims"
 
 
+#: Unix domain socket paths are bounded by sockaddr_un.sun_path: 108 bytes on
+#: Linux, 104 on macOS. zellij appends "/contract_version_1/<session>" to
+#: whatever we hand it, so our directory must leave room for that.
+SUN_PATH_MAX = 104
+_SOCKET_SUFFIX_BUDGET = 60  # "/contract_version_1/" + a bounded session name
+
+
+def _uid_tag() -> str:
+    try:
+        return str(os.getuid())  # type: ignore[attr-defined]
+    except AttributeError:
+        return os.environ.get("USERNAME", "user")
+
+
 def runtime_dir() -> Path:
     """Where zellij's session sockets live for tethered sessions.
 
     Isolating this is what keeps tethered sessions out of the user's own
-    `zellij ls`. Note it isolates LIVE sessions only - zellij's resurrection
-    cache is not redirectable on Windows, which is why liveness is read from
-    socket markers here and never from `zellij ls`.
+    `zellij ls`. It isolates LIVE sessions only - zellij's resurrection cache
+    is not redirectable on Windows, which is why liveness is read from socket
+    markers and never from `zellij ls`.
+
+    Sockets deliberately do NOT live under the XDG state tree by default.
+    A path like ~/.local/state/agent-tether/run/sock/contract_version_1/<name>
+    is well over the 104-byte sun_path limit once a real home directory and
+    session name are substituted, and the failure is a cryptic
+    "IPC socket path is too long" from zellij. zellij itself uses
+    $XDG_RUNTIME_DIR or /tmp/zellij-<uid> for the same reason.
     """
-    raw = os.environ.get("XDG_RUNTIME_DIR")
-    if raw and Path(raw).is_absolute() and not _root_override():
-        return Path(raw) / APP
-    return state_dir() / "run"
+    raw = os.environ.get("TETHER_SOCKET_DIR")
+    if raw:
+        return Path(raw).expanduser()
+
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg and Path(xdg).is_absolute():
+        return Path(xdg) / APP
+
+    root = _root_override()
+    if root:
+        # Honour the isolation TETHER_HOME asks for, but not at the cost of an
+        # unusable socket. If the isolated path is too long, fall back to a
+        # short one still keyed to this root, so separate roots stay separate.
+        candidate = root / "run"
+        if len(str(candidate)) + _SOCKET_SUFFIX_BUDGET <= SUN_PATH_MAX or os.name == "nt":
+            return candidate
+        import hashlib
+
+        tag = hashlib.sha256(str(root).encode()).hexdigest()[:8]
+        return Path(tempfile.gettempdir()) / f"{APP}-{_uid_tag()}-{tag}"
+
+    if os.name == "nt":
+        # Windows uses named pipes, not filesystem sockets; the limit does not
+        # apply, so keep it tidy under the state tree.
+        return state_dir() / "run"
+    return Path(tempfile.gettempdir()) / f"{APP}-{_uid_tag()}"
 
 
 def socket_dir() -> Path:
     return runtime_dir() / "sock"
+
+
+def socket_path_headroom() -> int:
+    """Bytes left for zellij's own suffix. Negative means sockets will fail."""
+    if os.name == "nt":
+        return SUN_PATH_MAX
+    return SUN_PATH_MAX - len(str(socket_dir())) - len("/contract_version_1/")
 
 
 def sessions_dir() -> Path:
@@ -195,4 +246,5 @@ def describe() -> dict[str, str]:
         "layouts_dir": str(layouts_dir()),
         "zellij_config": str(zellij_config_file()),
         "builtin_data": str(builtin_data_dir()),
+        "socket_path_headroom": str(socket_path_headroom()),
     }

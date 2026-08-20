@@ -467,6 +467,13 @@ def doctor_cmd(as_json):
     if shims.installed(bindir) and not shims.on_path(bindir):
         problems.append(f"shim dir is not on PATH: {shims.path_hint(bindir)}")
 
+    headroom = paths.socket_path_headroom()
+    if headroom < 0:
+        problems.append(
+            f"socket dir path is too long for a unix socket by {-headroom} bytes: "
+            f"{paths.socket_dir()} - set TETHER_SOCKET_DIR to something shorter"
+        )
+
     for path, msg in reg.errors + cfg_errors:
         problems.append(f"config: {path}: {msg}")
     for bad in store.corrupt_records():
