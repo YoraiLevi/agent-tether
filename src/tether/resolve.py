@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from pathlib import Path
 
 MARKER = "agent-tether-shim"
@@ -34,8 +35,42 @@ class BinaryNotFound(RuntimeError):
     pass
 
 
+def launcher_exe() -> Path | None:
+    """The installed `tether-shim.exe` console-script launcher, if present.
+
+    This lives in RESOLUTION, not just generation, and that placement is the
+    whole point. On Windows our shim is a byte-copy of this launcher named
+    `claude.exe`, because CreateProcess appends only `.exe` and never consults
+    PATHEXT - so a `.cmd` shim is invisible to a bare
+    `subprocess.Popen(["claude"])`, which is the orchestrator case this tool
+    exists for.
+
+    A copied binary cannot carry a marker string. If resolution failed to
+    recognise it, next_binary() would hand back our own shim and it would call
+    itself forever.
+    """
+    if os.name != "nt":
+        return None
+    found = shutil.which("tether-shim")
+    if found and found.lower().endswith(".exe"):
+        return Path(found)
+    candidate = Path(sys.executable).parent / "tether-shim.exe"
+    return candidate if candidate.is_file() else None
+
+
 def _is_our_shim(path: Path) -> bool:
+    """True for both shim flavours: marked text, or a copy of our launcher."""
     try:
+        if path.suffix.lower() == ".exe":
+            source = launcher_exe()
+            if source is None or not source.is_file():
+                return False
+            try:
+                return path.stat().st_size == source.stat().st_size and (
+                    path.read_bytes() == source.read_bytes()
+                )
+            except OSError:
+                return False
         if path.stat().st_size > 64 * 1024:
             return False  # a real binary; do not read megabytes off disk
         with path.open("rb") as fh:

@@ -36,11 +36,17 @@ def make_fake_binary(directory, name: str) -> str:
 # --------------------------------------------------------------------------
 
 
-def test_generated_shim_carries_the_marker(isolated):
+def test_generated_shim_is_recognisable_as_ours(isolated):
+    """On Windows the primary artifact is a COPIED .exe launcher (binary, so it
+    cannot carry the marker string) - CreateProcess never looks at PATHEXT, so
+    a .cmd alone is invisible to an orchestrator spawning without a shell."""
     result = shims.install("claude")
     assert result.action == "created"
     assert shims.is_shim(result.path)
-    assert resolve.MARKER in result.path.read_text(encoding="utf-8")
+    if os.name == "nt":
+        assert result.path.suffix == ".exe" or shims.launcher_exe() is None
+    else:
+        assert resolve.MARKER in result.path.read_text(encoding="utf-8")
 
 
 def test_shim_is_executable_on_posix(isolated):
@@ -54,9 +60,16 @@ def test_reinstall_is_idempotent(isolated):
     assert shims.install("claude").action == "unchanged"
 
 
-def test_install_never_clobbers_a_foreign_file(isolated):
-    target = shims.shim_path("claude")
-    target.parent.mkdir(parents=True, exist_ok=True)
+@pytest.mark.parametrize("suffix", [".exe", None])
+def test_install_never_clobbers_a_foreign_file(isolated, suffix):
+    directory = paths.bin_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    if suffix == ".exe":
+        if os.name != "nt" or shims.launcher_exe() is None:
+            pytest.skip("windows exe shim not applicable here")
+        target = directory / "claude.exe"
+    else:
+        target = shims.shim_path("claude", directory)
     target.write_text("someone else's file", encoding="utf-8")
     result = shims.install("claude")
     assert result.action == "skipped"
@@ -84,9 +97,30 @@ def test_installed_lists_only_our_shims(isolated):
 
 
 def test_shim_body_quotes_the_entry_point(isolated, monkeypatch):
+    """The TEXT shim must quote a spaced entry path.
+
+    On Windows the primary artifact is the .exe, so read its .cmd companion.
+    """
     monkeypatch.setenv("TETHER_SHIM_ENTRY", r"C:\Program Files\x\tether-shim.exe")
-    body = shims.install("claude").path.read_text(encoding="utf-8")
+    shims.install("claude")
+    body = shims.shim_path("claude").read_text(encoding="utf-8")
     assert '"C:\\Program Files\\x\\tether-shim.exe"' in body
+
+
+def test_our_exe_shim_is_never_returned_as_the_target(isolated, monkeypatch):
+    """The .exe shim carries no marker string, so resolution must recognise it
+    by identity - otherwise next_binary hands back our own shim and it calls
+    itself forever."""
+    if os.name != "nt" or resolve.launcher_exe() is None:
+        pytest.skip("windows exe shim not applicable here")
+    real_dir = isolated / "realbin"
+    real = make_fake_binary(real_dir, "claude")
+    shims.install("claude")
+    assert (paths.bin_dir() / "claude.exe").is_file()
+    monkeypatch.setenv("PATH", os.pathsep.join([str(paths.bin_dir()), str(real_dir)]))
+    resolved = resolve.next_binary("claude")
+    assert resolved == real
+    assert not resolved.lower().endswith("claude.exe")
 
 
 # --------------------------------------------------------------------------

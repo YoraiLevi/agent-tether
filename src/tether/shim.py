@@ -74,15 +74,40 @@ def exec_passthrough(binary: str, argv: list[str]) -> int:
         return 130
 
 
+def _agent_name(raw: list[str]) -> str:
+    """Which agent are we standing in for?
+
+    Preference order, and the order matters:
+
+    1. argv[0]'s stem. On Windows the shim is a COPY of the console-script
+       launcher named `claude.exe`, so its own filename is the agent. This is
+       the only channel that survives a bare CreateProcess spawn - which is
+       precisely the orchestrator case this product exists for.
+    2. TETHER_SHIM_AGENT, set by the POSIX sh shim.
+    3. The first argument, for `tether-shim claude ...` by hand.
+    """
+    stem = ""
+    try:
+        stem = os.path.splitext(os.path.basename(sys.argv[0]))[0]
+    except Exception:  # noqa: BLE001
+        stem = ""
+    if stem and stem not in {"tether-shim", "tether", "__main__", "shim", "python", "python3"}:
+        return stem
+    env_name = os.environ.get("TETHER_SHIM_AGENT", "")
+    if env_name:
+        return env_name
+    return raw[0] if raw else ""
+
+
 def main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
 
-    agent = os.environ.pop("TETHER_SHIM_AGENT", "")
+    agent = _agent_name(raw)
     if not agent:
-        if not raw:
-            sys.stderr.write("tether-shim: no agent specified\n")
-            return 2
-        agent, raw = raw[0], raw[1:]
+        sys.stderr.write("tether-shim: no agent specified\n")
+        return 2
+    if raw and not os.environ.get("TETHER_SHIM_AGENT") and raw[0] == agent:
+        raw = raw[1:]
 
     try:
         from .run import run_shim

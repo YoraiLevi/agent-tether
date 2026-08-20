@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import paths
-from .resolve import MARKER
+from .resolve import MARKER, _is_our_shim, launcher_exe
 
 WINDOWS = os.name == "nt"
 
@@ -91,13 +91,18 @@ def shim_path(agent: str, directory: Path | None = None) -> Path:
 
 
 def is_shim(path: Path) -> bool:
-    try:
-        if path.stat().st_size > 64 * 1024:
-            return False
-        with path.open("rb") as fh:
-            return MARKER.encode() in fh.read(4096)
-    except OSError:
-        return False
+    """Is this file one of ours?
+
+    Delegates to resolve so generation and RESOLUTION can never disagree about
+    what counts as our shim - a disagreement there means infinite recursion.
+    """
+    return _is_our_shim(path)
+
+
+def _write_if_changed(target: Path, body: str) -> None:
+    existing = target.read_bytes() if target.exists() else None
+    if existing != body.encode("utf-8"):
+        target.write_text(body, encoding="utf-8", newline="")
 
 
 def install(agent: str, directory: Path | None = None, entry: str | None = None) -> ShimResult:
@@ -105,6 +110,29 @@ def install(agent: str, directory: Path | None = None, entry: str | None = None)
     directory.mkdir(parents=True, exist_ok=True)
     target = shim_path(agent, directory)
     entry = entry or entry_point()
+
+    if WINDOWS:
+        exe_source = launcher_exe()
+        exe_target = directory / f"{agent}.exe"
+        if exe_source is not None:
+            # Guard BOTH artifacts before writing either, so a foreign file at
+            # one path is never half-shadowed by us writing the other.
+            for candidate in (exe_target, target):
+                if candidate.exists() and not is_shim(candidate):
+                    return ShimResult(
+                        agent, candidate, "skipped", "a file that is not ours already exists there"
+                    )
+            existing = exe_target.read_bytes() if exe_target.exists() else None
+            payload = exe_source.read_bytes()
+            action = "unchanged" if existing == payload else ("updated" if existing else "created")
+            if action != "unchanged":
+                shutil.copyfile(exe_source, exe_target)
+            # The .cmd is written too, as inert insurance: within one directory
+            # PATHEXT resolves .EXE before .CMD, so the exe still wins, but a
+            # shell-only caller on a machine missing the exe still works.
+            _write_if_changed(target, _windows_body(agent, entry))
+            return ShimResult(agent, exe_target, action)
+
     body = _windows_body(agent, entry) if WINDOWS else _posix_body(agent, entry)
 
     if target.exists() and not is_shim(target):
@@ -125,25 +153,36 @@ def install(agent: str, directory: Path | None = None, entry: str | None = None)
 
 
 def uninstall(agent: str, directory: Path | None = None) -> ShimResult:
-    target = shim_path(agent, directory)
-    if not target.exists():
-        return ShimResult(agent, target, "unchanged", "not present")
-    if not is_shim(target):
+    directory = directory or paths.bin_dir()
+    targets = [shim_path(agent, directory)]
+    if WINDOWS:
+        targets.insert(0, directory / f"{agent}.exe")
+
+    present = [t for t in targets if t.exists()]
+    if not present:
+        return ShimResult(agent, targets[0], "unchanged", "not present")
+
+    foreign = [t for t in present if not is_shim(t)]
+    if foreign:
         # Never delete a file we did not create.
-        return ShimResult(agent, target, "skipped", "not an agent-tether shim; left alone")
-    target.unlink()
-    return ShimResult(agent, target, "removed")
+        return ShimResult(agent, foreign[0], "skipped", "not an agent-tether shim; left alone")
+
+    for t in present:
+        t.unlink()
+    return ShimResult(agent, present[0], "removed")
 
 
 def installed(directory: Path | None = None) -> list[str]:
     directory = directory or paths.bin_dir()
     if not directory.is_dir():
         return []
-    out = []
+    # Deduped: on Windows one agent has both a .exe and a .cmd.
+    out: set[str] = set()
     for path in sorted(directory.iterdir()):
-        if path.is_file() and is_shim(path):
-            out.append(path.stem if WINDOWS else path.name)
-    return out
+        if not path.is_file() or not is_shim(path):
+            continue
+        out.add(path.stem if path.suffix else path.name)
+    return sorted(out)
 
 
 def path_entries() -> list[str]:

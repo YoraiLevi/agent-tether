@@ -80,7 +80,12 @@ def run_shim(agent_name: str, argv: list[str]) -> int:
     human = decision.lane is router.Lane.HUMAN
 
     if provided:
-        session = naming.for_session_id(agent_name, provided)
+        # A vendor-issued id must reach the session that already holds that
+        # conversation, whatever that session happens to be called. Look it up
+        # rather than deriving a name from the id, so this still works for a
+        # human session named after its directory.
+        existing = store.find(session_id=provided)
+        session = existing[0].session if existing else naming.for_session_id(agent_name, provided)
     elif human:
         session = naming.for_cwd(agent_name, cwd)
     else:
@@ -150,7 +155,17 @@ def run_shim(agent_name: str, argv: list[str]) -> int:
     if agent.can_choose_id and not provided:
         provider_id = naming.new_session_id()
         launch_argv = [agent.set_id_flag, provider_id, *launch_argv]
-        session = naming.for_session_id(agent_name, provider_id)
+        if not human:
+            # ONLY outside the human lane. Re-deriving the name from a freshly
+            # minted UUID here used to overwrite the per-directory name, so the
+            # next day `cd project && claude` computed the cwd name, missed,
+            # minted another UUID and opened a brand-new empty conversation -
+            # while yesterday's agent stayed live and orphaned.
+            #
+            # That silently broke the single property the whole tool is sold
+            # on, for every vendor that can be told its id: claude, gemini,
+            # pi, grok. The id lives in the record; the NAME stays the cwd.
+            session = naming.for_session_id(agent_name, provider_id)
 
     env = store.carried_env()
     store.save(
