@@ -52,6 +52,9 @@ packages = ["src/tether"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "integration: needs a real zellij on PATH; set TETHER_INTEGRATION=1 to run",
+]
 
 [tool.ruff]
 line-length = 100
