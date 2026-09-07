@@ -228,3 +228,49 @@ def test_vendor_resume_id_reaches_the_existing_human_session(isolated, tmp_path)
     )
     found = store.find(session_id="the-uuid")
     assert [r.session for r in found] == ["tether-claude-payments-abcd1234"]
+
+
+# --- `tether run`: use the tool without installing a shim -----------------
+
+
+def test_run_uses_normal_lane_routing(isolated, tmp_path, monkeypatch):
+    """`tether run claude -p x` must still pass through, not open a session.
+
+    `run` exists so the tool is usable without shadowing anything on PATH, so
+    it has to route identically to the shim - otherwise the two paths would
+    disagree about what a headless call means.
+    """
+    from click.testing import CliRunner
+
+    from tether import cli
+
+    seen: dict = {}
+    monkeypatch.setattr(cli, "__doc__", cli.__doc__)  # keep module import side effects explicit
+
+    import tether.run as run_mod
+
+    monkeypatch.setattr(run_mod, "next_binary", lambda n, configured=None: "/usr/bin/claude")
+    monkeypatch.setattr(
+        run_mod, "exec_passthrough", lambda binary, argv: seen.update(binary=binary, argv=argv) or 0
+    )
+
+    result = CliRunner().invoke(cli.main, ["run", "claude", "-p", "hello world"])
+    assert result.exit_code == 0, result.output
+    assert seen["binary"] == "/usr/bin/claude"
+    assert seen["argv"] == ["-p", "hello world"]
+
+
+def test_run_forwards_vendor_flags_click_would_otherwise_steal(isolated, monkeypatch):
+    from click.testing import CliRunner
+
+    import tether.run as run_mod
+    from tether import cli
+
+    seen: dict = {}
+    monkeypatch.setattr(run_mod, "next_binary", lambda n, configured=None: "/usr/bin/claude")
+    monkeypatch.setattr(
+        run_mod, "exec_passthrough", lambda binary, argv: seen.update(argv=argv) or 0
+    )
+    result = CliRunner().invoke(cli.main, ["run", "claude", "--version"])
+    assert result.exit_code == 0, result.output
+    assert seen["argv"] == ["--version"]

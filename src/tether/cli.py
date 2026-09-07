@@ -201,6 +201,37 @@ def new_cmd(agent, extra, cwd_):
     sys.exit(rc)
 
 
+@main.command(
+    "run",
+    context_settings={"ignore_unknown_options": True, "allow_interspersed_args": False},
+)
+@click.argument("agent")
+@click.argument("extra", nargs=-1, type=click.UNPROCESSED)
+@click.option("--cwd", "cwd_", default=None, help="working directory for the session")
+def run_cmd(agent, extra, cwd_):
+    """Run AGENT tethered, right now, without installing a shim.
+
+    `tether run claude` is exactly what the `claude` shim would have done,
+    invoked explicitly. That makes it the way to try the tool before shadowing
+    anything on PATH, and the escape hatch on a machine where you would rather
+    not shadow at all.
+
+    Routing is unchanged, so headless calls still pass straight through:
+    `tether run claude -p "hi"` prints text and exits, it does not open a
+    session.
+    """
+    from .run import run_shim
+
+    cwd_ = cwd_ or os.getcwd()
+    prev = os.getcwd()
+    try:
+        os.chdir(cwd_)
+        rc = run_shim(agent, list(extra))
+    finally:
+        os.chdir(prev)
+    sys.exit(rc)
+
+
 @main.command("read")
 @click.argument("session")
 @click.option("--json", "as_json", is_flag=True)

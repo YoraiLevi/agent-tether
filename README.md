@@ -44,6 +44,14 @@ tether doctor
 > Not on PyPI yet, so install from git for now. Once published,
 > `uv tool install agent-tether` will work.
 
+Prefer to try it before shadowing anything on `PATH`? Skip step two and use
+`tether run` instead:
+
+```bash
+tether run claude                 # same as the shim would do
+tether run claude -p "summarize"  # still passes through, prints and exits
+```
+
 `tether install` writes one small shim per agent CLI and tells you if its directory isn't on `PATH` yet. `tether doctor` verifies the whole chain and names anything that would break it.
 
 Full details, per-OS notes and troubleshooting: **[docs/INSTALL.md](docs/INSTALL.md)**.
@@ -202,6 +210,7 @@ Layering, every field, and worked examples: **[docs/CONFIG.md](docs/CONFIG.md)**
 | `tether ls` | sessions, with filters and `--json` |
 | `tether get <session>` | one session in detail |
 | `tether attach <session>` | attach, resurrecting first if needed |
+| `tether run <agent> …` | run an agent tethered now, without installing a shim |
 | `tether new <agent>` | create detached, print the id |
 | `tether read` / `send` | read a screen, type into a session |
 | `tether restore` | after a reboot, bring everything back |
