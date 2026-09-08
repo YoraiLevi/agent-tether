@@ -10,6 +10,33 @@ inheriting when you override one, see [AGENTS.md](AGENTS.md).
 
 ---
 
+
+## `close_on_exit`
+
+What happens to the pane when the agent process exits.
+
+```toml
+# ~/.config/agent-tether/config.toml
+close_on_exit = false   # default
+```
+
+| Value | Behaviour |
+|---|---|
+| `false` (default) | zellij holds the pane open with a rerun banner. The session stays alive, and pressing Enter restarts the agent. This is why you do not see `Bye from Zellij!` when an agent exits. |
+| `true` | the pane closes, so the session ends with the agent. |
+
+The default is hold-open because it is what keeps a session **recoverable**: a
+session that ends the moment its agent dies cannot be resurrected, and an agent
+that crashed is exactly the one you want to restart.
+
+The cost is that a session outlives its agent, so `tether ls` can show a `live`
+session whose agent is gone. Set `close_on_exit = true` if you would rather a
+finished agent take its session with it.
+
+A malformed value is ignored rather than raised, like every other config error:
+this is read on the shim path, where a config mistake must never stop an agent
+from starting.
+
 ## 1. Where configuration lives
 
 `agent-tether` uses XDG-style paths on **every** operating system, including

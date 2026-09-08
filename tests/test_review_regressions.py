@@ -274,3 +274,46 @@ def test_run_forwards_vendor_flags_click_would_otherwise_steal(isolated, monkeyp
     result = CliRunner().invoke(cli.main, ["run", "claude", "--version"])
     assert result.exit_code == 0, result.output
     assert seen["argv"] == ["--version"]
+
+
+# --- close_on_exit: what happens to the pane when the agent exits ---------
+
+
+def test_layout_holds_the_pane_open_by_default(isolated):
+    """Default is hold-open, which is what keeps a session recoverable.
+
+    It is also why you never see "Bye from Zellij!" - the pane survives the
+    command, so the session and the attached client survive too.
+    """
+    from tether import zellij
+
+    path = zellij.write_layout("s1", "/bin/agent", ["--x"], "/tmp", close_on_exit=False)
+    assert "close_on_exit" not in path.read_text(encoding="utf-8")
+
+
+def test_close_on_exit_true_emits_the_attribute(isolated):
+    from tether import zellij
+
+    path = zellij.write_layout("s2", "/bin/agent", [], "/tmp", close_on_exit=True)
+    text = path.read_text(encoding="utf-8")
+    assert "close_on_exit true" in text
+    # must sit INSIDE the pane block, after args
+    assert text.index("close_on_exit") < text.index("    }")
+
+
+def test_close_on_exit_reads_config_toml(isolated):
+    from tether import paths as p
+    from tether import zellij
+
+    (p.config_file()).write_text("close_on_exit = true\n", encoding="utf-8")
+    path = zellij.write_layout("s3", "/bin/agent", [], "/tmp")
+    assert "close_on_exit true" in path.read_text(encoding="utf-8")
+
+
+def test_malformed_close_on_exit_is_ignored_not_raised(isolated):
+    from tether import paths as p
+    from tether import zellij
+
+    (p.config_file()).write_text('close_on_exit = "yes please"\n', encoding="utf-8")
+    path = zellij.write_layout("s4", "/bin/agent", [], "/tmp")
+    assert "close_on_exit" not in path.read_text(encoding="utf-8")
